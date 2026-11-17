@@ -2,25 +2,33 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const mysql = require('mysql2');
-const midtransClient = require('midtrans-client'); // Modul baru Midtrans
+const midtransClient = require('midtrans-client');
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
 
+// Koneksi ke TiDB Cloud (Cloud) atau Laragon (Lokal)
 const db = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  password: '',
-  database: 'donasi_ofu'
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'donasi_ofu',
+  ssl: process.env.DB_HOST ? { rejectUnauthorized: true } : undefined
 });
 
-// Konfigurasi Midtrans Sandbox
+// Konfigurasi Midtrans
 let snap = new midtransClient.Snap({
-  isProduction : false,
-  serverKey : 'SB-Mid-server-vDhqAPXiNGgm.mdhe7Dh~ZDY' // <-- GANTI DENGAN SERVER KEY MIDTRANS KAMU
+  isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+  serverKey: process.env.MIDTRANS_SERVER_KEY || 'SB-Mid-server-vDhqAPXiNGgm.mdhe7Dh~ZDY'
+});
+
+// Cek status server (berguna untuk memastikan server Render hidup)
+app.get('/', (req, res) => {
+  res.send('Server Backend Donasi OFU Berjalan Normal!');
 });
 
 app.post('/api/roblox-user', async (req, res) => {
@@ -67,34 +75,31 @@ app.post('/api/create-transaction', (req, res) => {
       return res.status(500).json({ error: 'Gagal menyimpan transaksi' });
     }
     
-    // Meminta token pembayaran (Snap Token) ke Midtrans
     let parameter = {
       "transaction_details": {
-          "order_id": transaction_id,
-          "gross_amount": nominal
+        "order_id": transaction_id,
+        "gross_amount": nominal
       },
       "customer_details": {
-          "first_name": username,
+        "first_name": username,
       }
     };
 
     snap.createTransaction(parameter)
       .then((transaction) => {
-          // Kirim token Midtrans ke Frontend React
-          res.json({ 
-            message: 'Transaksi berhasil dibuat', 
-            transaction_id: transaction_id,
-            token: transaction.token
-          });
+        res.json({ 
+          message: 'Transaksi berhasil dibuat', 
+          transaction_id: transaction_id,
+          token: transaction.token
+        });
       })
       .catch((e) => {
-          console.error("Midtrans Error:", e);
-          res.status(500).json({ error: 'Gagal membuat QRIS Midtrans' });
+        console.error("Midtrans Error:", e);
+        res.status(500).json({ error: 'Gagal membuat QRIS Midtrans' });
       });
   });
 });
 
-// Endpoint untuk menerima notifikasi otomatis dari Midtrans (Webhook)
 app.post('/api/midtrans-notification', (req, res) => {
   let notificationJson = req.body;
 
@@ -106,7 +111,6 @@ app.post('/api/midtrans-notification', (req, res) => {
 
       console.log(`Notifikasi masuk! Order ID: ${orderId}. Status: ${transactionStatus}. Fraud: ${fraudStatus}`);
 
-      // Jika pembayaran berhasil (settlement)
       if (transactionStatus == 'capture' || transactionStatus == 'settlement') {
         const query = "UPDATE transactions SET status = 'LUNAS' WHERE transaction_id = ?";
         db.query(query, [orderId], (err, results) => {
@@ -118,7 +122,6 @@ app.post('/api/midtrans-notification', (req, res) => {
         });
       } 
       
-      // Balas ke Midtrans bahwa pesan sudah diterima
       res.status(200).send('OK');
     })
     .catch((e) => {
@@ -127,7 +130,6 @@ app.post('/api/midtrans-notification', (req, res) => {
     });
 });
 
-// Endpoint untuk mengambil riwayat transaksi berdasarkan username Roblox
 app.get('/api/history/:username', (req, res) => {
   const { username } = req.params;
   
@@ -143,5 +145,5 @@ app.get('/api/history/:username', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Backend server sudah berjalan di http://localhost:${port}`);
+  console.log(`Backend server sudah berjalan di port ${port}`);
 });
