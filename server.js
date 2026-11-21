@@ -26,11 +26,12 @@ let snap = new midtransClient.Snap({
   serverKey: process.env.MIDTRANS_SERVER_KEY || 'SB-Mid-server-vDhqAPXiNGgm.mdhe7Dh~ZDY'
 });
 
-// Cek status server (berguna untuk memastikan server Render hidup)
+// Cek status server
 app.get('/', (req, res) => {
-  res.send('Server Backend Donasi OFU Berjalan Normal!');
+  res.send('Server Backend Donasi Ozora Berjalan Normal!');
 });
 
+// Cek username & avatar Roblox
 app.post('/api/roblox-user', async (req, res) => {
   const { username } = req.body;
   if (!username) return res.status(400).json({ error: 'Username tidak boleh kosong' });
@@ -63,13 +64,14 @@ app.post('/api/roblox-user', async (req, res) => {
   }
 });
 
+// Buat transaksi baru & generate token Midtrans
 app.post('/api/create-transaction', (req, res) => {
   const { username, jenis_donasi, nominal, pesan } = req.body;
-  const transaction_id = 'OFU-' + Date.now();
+  const transaction_id = 'OZORA-' + Date.now();
 
   const query = "INSERT INTO transactions (transaction_id, username, jenis_donasi, nominal, pesan, status) VALUES (?, ?, ?, ?, ?, 'PENDING')";
   
-  db.query(query, [transaction_id, username, jenis_donasi, nominal, pesan], (err, results) => {
+  db.query(query, [transaction_id, username, jenis_donasi || 'Cash', nominal, pesan], (err, results) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ error: 'Gagal menyimpan transaksi' });
@@ -100,6 +102,7 @@ app.post('/api/create-transaction', (req, res) => {
   });
 });
 
+// Webhook notifikasi pembayaran dari Midtrans
 app.post('/api/midtrans-notification', (req, res) => {
   let notificationJson = req.body;
 
@@ -130,6 +133,7 @@ app.post('/api/midtrans-notification', (req, res) => {
     });
 });
 
+// Ambil riwayat donasi berdasarkan username
 app.get('/api/history/:username', (req, res) => {
   const { username } = req.params;
   
@@ -141,6 +145,47 @@ app.get('/api/history/:username', (req, res) => {
       return res.status(500).json({ error: 'Gagal mengambil riwayat transaksi' });
     }
     res.json(results);
+  });
+});
+
+// Endpoint khusus Server Map Roblox untuk mengambil donasi baru
+app.get('/api/roblox/donations', (req, res) => {
+  const secretKey = req.headers['x-roblox-secret'];
+  const validSecret = process.env.ROBLOX_SECRET_KEY || 'ozora_club_rahasia_2026';
+
+  if (secretKey !== validSecret) {
+    return res.status(401).json({ error: 'Unauthorized: Secret key salah' });
+  }
+
+  const selectQuery = `
+    SELECT id, transaction_id, username, nominal, pesan, created_at 
+    FROM transactions 
+    WHERE status = 'LUNAS' AND is_announced = 0 
+    ORDER BY created_at ASC 
+    LIMIT 10
+  `;
+
+  db.query(selectQuery, (err, rows) => {
+    if (err) {
+      console.error('Gagal mengambil data donasi Roblox:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (rows.length === 0) {
+      return res.json({ success: true, donations: [] });
+    }
+
+    const ids = rows.map(row => row.id);
+    const updateQuery = `UPDATE transactions SET is_announced = 1 WHERE id IN (?)`;
+
+    db.query(updateQuery, [ids], (updateErr) => {
+      if (updateErr) {
+        console.error('Gagal update status is_announced:', updateErr);
+        return res.status(500).json({ error: 'Gagal memperbarui status pengumuman' });
+      }
+
+      res.json({ success: true, donations: rows });
+    });
   });
 });
 
